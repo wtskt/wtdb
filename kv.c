@@ -11,51 +11,34 @@
 **/
 void RemoveKeyValue(char *fileName, char *key) {
     char buf[ABUP_JSON_VALUE_SIZE] = "";
-    int isExist = 0;
     int i = 0;
 
     FILE *fp, *temp;
     fp = fopen(fileName, "r");
-    temp = fopen("temp.txt", "w"); // 临时文件用于保存要删除数据之外的其它数据
+    temp = fopen("temp", "w"); // 临时文件用于保存要删除数据之外的其它数据
 
     if (fp == NULL) { // 文件不存在
         printf("--------该文件不存在--------");
         return ;
     }
 
-    fgets(buf, ABUP_JSON_VALUE_SIZE, fp);
-
-    do { // 将键值不为key的kv对写入temp.txt文件中
+    while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp)) { // 将键值不为key的kv对写入temp.txt文件中
         while (buf[i] == ' ') { // 跳过空格
             i++;
         }
 
+        // 将删除后的所有数据存入temp临时文件中
         if (strncmp(&buf[i], key, strlen(key)) == 0) {
             continue;
         } else {
             fputs(buf, temp);
         }
-    } while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp));
-
-    fclose(fp);
-    fclose(temp);
-
-    fp = fopen(fileName, "w");
-    temp = fopen("temp.txt", "r");
-
-    // 将temp.txt中的数据写入fileName对应的文件中
-    while (1) {
-        fgets(buf, sizeof(buf), temp);
-        if (feof(temp)) {
-            printf("删除成功\n");
-            break;
-        }
-        fputs(buf, fp);
     }
 
     fclose(fp);
     fclose(temp);
-    remove("temp.txt");
+    remove("test");
+    rename("temp", fileName);
 }
 
 
@@ -72,56 +55,44 @@ void WriteKeyValue(char *fileName, char *key, char *value) {
     int isExist = 0;
 
     FILE *fp, *temp;
-    fp = fopen(fileName, "r"); // 以只读的模式打开要写入的文件
+    fp = fopen(fileName, "r+");                      // 以读写的模式打开要写入的文件
 
-    if (fp == NULL) {  // 文件不存在
-        fp = fopen(fileName, "w"); // "w"模式 -> 如果文件不存在，则创建一个文件
-        fprintf(fp, "%s = %s\n", key, value); // 将kv对以格式化的形式写入文件
+    if (fp == NULL) {                                // 文件不存在
+        fp = fopen(fileName, "w+");                  // "w+"模式 -> 如果文件不存在，则创建一个文件
+        fprintf(fp, "%s = %s\n", key, value);        // 将kv对以格式化的形式写入文件
         fclose(fp);
-        printf("--------写入成功-------");
-    } else {           // 文件已经存在
-        temp = fopen("temp.txt", "w"); // 创建一个temp.txt文件
-        fgets(buf, ABUP_JSON_VALUE_SIZE, fp); // 从文件中读取数据
+    } else {                                         // 文件已经存在
+        temp = fopen("temp", "w+");                  // 创建一个temp.txt文件
 
         //查找对应的key
-        do {
+        while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp)) {
             while (buf[i] == ' ') { // 跳过空字符
                 i++;
             }
 
+            // 将更新后的所有数据保存在临时文件temp中
             if (strncmp(&buf[i], key, strlen(key)) == 0) {
-                fprintf(temp, "%s = %s\n", key, value); // 将kv对写入temp.txt
+                fprintf(temp, "%s = %s\n", key, value);
                 isExist = 1;
             } else {
-                fputs(buf, temp); // 将字符串buf写入temp文件中
+                fputs(buf, temp);
             }
 
-        } while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp));
-
-        if (isExist == 0) {
-            fprintf(temp, "%s = %s\n", key, value);
         }
 
-        fclose(fp);
         fclose(temp);
 
-        fp = fopen(fileName, "w");
-        temp = fopen("temp.txt", "r");
-
-        while (1) {
-            fgets(buf, sizeof(buf), temp);
-            if (feof(temp)) {
-                printf("---------写入成功--------");
-                break;
-            }
-            fputs(buf, fp);
+        if (isExist == 0) {            // 在数据文件中没有找到对应的key
+            fprintf(fp, "%s = %s\n", key, value);
+            fclose(fp);
+            remove("temp");
+        } else {
+            fclose(fp);
+            remove("test");            // 删除原来的数据文件
+            rename("temp", fileName);  // 将临时文件命名为数据据文件
         }
-        fclose(fp);
-        fclose(temp);
-        remove("temp.txt");
     }
 }
-
 
 
 /**
@@ -134,7 +105,7 @@ char* ReadValue(char *fileName,char *key) {
     char buf[ABUP_JSON_VALUE_SIZE] = "";
     int i = 0;
     char *value = NULL;
-    int valueLen = 0; // value长度
+    int valueLen; // value长度
     char *valueBuf = NULL;
     int isExist = 0;
     FILE *fp;
@@ -144,8 +115,7 @@ char* ReadValue(char *fileName,char *key) {
         return NULL;
     }
 
-    fgets(buf, ABUP_JSON_VALUE_SIZE, fp); // 从文件中读取数据到buf数组中
-    do {
+    while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp)) {
         while (buf[i] == ' ') { // 跳过空格
             i++;
         }
@@ -164,7 +134,7 @@ char* ReadValue(char *fileName,char *key) {
             isExist = 1;
             break;
         }
-    } while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp));
+    }
 
     if (isExist == 0) {
         return NULL;
