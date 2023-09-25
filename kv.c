@@ -2,6 +2,9 @@
 // Created by 王童 on 2023/9/21.
 //
 #include "kv.h"
+#include "index.h"
+#include "windows.h"
+#include "time.h"
 
 
 /**
@@ -52,46 +55,47 @@ void RemoveKeyValue(char *fileName, char *key) {
 void WriteKeyValue(char *fileName, char *key, char *value) {
     char buf[ABUP_JSON_KEY_SIZE] = "";
     int i = 0;
-    int isExist = 0;
+    int offset = 0;
+
+    struct index *targetIndex = findIndex(key);
 
     FILE *fp, *temp;
-    fp = fopen(fileName, "r+");                      // 以读写的模式打开要写入的文件
+    fp = fopen(fileName, "r+");                       // 以读写的模式打开要写入的文件
 
-    if (fp == NULL) {                                // 文件不存在
-        fp = fopen(fileName, "w+");                  // "w+"模式 -> 如果文件不存在，则创建一个文件
-        fprintf(fp, "%s = %s\n", key, value);        // 将kv对以格式化的形式写入文件
+    if (fp == NULL) {                                 // 文件不存在
+        fp = fopen(fileName, "w+");                   // "w+"模式 -> 如果文件不存在，则创建一个文件
+        fprintf(fp, "%s\n", value);                   // 将value写入文件
         fclose(fp);
-    } else {                                         // 文件已经存在
-        temp = fopen("temp", "w+");                  // 创建一个temp.txt文件
+    } else if (targetIndex != NULL) {                 // key存在
+        temp = fopen("temp", "w+");                   // 创建一个temp.txt文件
+        offset = targetIndex->offset;                 // value的偏移量
 
-        //查找对应的key
+        //将数据写入temp文件
         while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp)) {
             while (buf[i] == ' ') { // 跳过空字符
                 i++;
             }
 
             // 将更新后的所有数据保存在临时文件temp中
-            if (strncmp(&buf[i], key, strlen(key)) == 0) {
-                fprintf(temp, "%s = %s\n", key, value);
-                isExist = 1;
+            if (ftell(fp) == offset) {
+                fprintf(temp, "%s\n", value);
             } else {
                 fputs(buf, temp);
             }
-
         }
-
         fclose(temp);
-
-        if (isExist == 0) {            // 在数据文件中没有找到对应的key
-            fprintf(fp, "%s = %s\n", key, value);
-            fclose(fp);
-            remove("temp");
-        } else {
-            fclose(fp);
-            remove("test");            // 删除原来的数据文件
-            rename("temp", fileName);  // 将临时文件命名为数据据文件
-        }
+        fclose(fp);
+        remove("test");                             // 删除原来的数据文件
+        rename("temp", fileName);                   // 将临时文件命名为数据据文件
+    } else {                                        // 在数据文件中没有找到对应的key
+        fseek(fp,0, SEEK_END);                      // 定位到文件末尾
+        offset = ftell(fp);
+        fprintf(fp, "%s\n", value);
+        fclose(fp);
     }
+
+    storageIndex(key, offset);
+    addIndex(key, offset);                          // 添加索引
 }
 
 
@@ -104,10 +108,8 @@ void WriteKeyValue(char *fileName, char *key, char *value) {
 char* ReadValue(char *fileName,char *key) {
     char buf[ABUP_JSON_VALUE_SIZE] = "";
     int i = 0;
-    char *value = NULL;
     int valueLen; // value长度
     char *valueBuf = NULL;
-    int isExist = 0;
     FILE *fp;
 
     fp = fopen(fileName, "r");
@@ -115,31 +117,96 @@ char* ReadValue(char *fileName,char *key) {
         return NULL;
     }
 
-    while (fgets(buf, ABUP_JSON_VALUE_SIZE, fp)) {
-        while (buf[i] == ' ') { // 跳过空格
-            i++;
-        }
-
-        if (strncmp(&buf[i], key, strlen(key)) == 0) { // 匹配对应的key值
-            // strstr(const char *s1, const char *s2) -> 返回指向s1字符串中s2字符串出现的首位置，否则返回NULL
-            value = strstr(&buf[i], "=") + 1;
-            valueLen = strlen(value); // 获取值的长度
-            valueBuf = (char*) malloc(sizeof (char) * (valueLen + 1));
-            i = 0;
-            while (i < valueLen) {
-                valueBuf[i] = value[i];
-                i++;
-            }
-            valueBuf[i] = '\0';
-            isExist = 1;
-            break;
-        }
-    }
-
-    if (isExist == 0) {
+    struct index *index = findIndex(key);
+    if (index == NULL) {                        // 判断key是否存在
+        printf("------key不存在------");
         return NULL;
     }
 
+    int offset = index->offset;                 // 偏移量
+    fseek(fp, offset, SEEK_SET);                // 定位数据
+    fgets(buf, ABUP_JSON_VALUE_SIZE, fp);       // 读出数据
+    valueLen = strlen(buf);
+    valueBuf = (char*) malloc(sizeof (char) * (valueLen + 1));
+    while (i < valueLen) {
+        valueBuf[i] = buf[i];
+        i++;
+    }
+    valueBuf[i] = '\0';
+
     fclose(fp);
     return valueBuf;
+}
+
+
+unsigned int seed = 1;
+char* genRandomString(int length) { // 生成length长度的随机字符串
+    int flag, i;
+    char* string;
+//    unsigned int seed = (unsigned) time(NULL);
+    srand(seed++);
+    if ((string = (char*) malloc(length)) == NULL ) {
+        return NULL ;
+    }
+
+    for (i = 0; i < length - 1; i++) {
+        flag = rand() % 3;
+        switch (flag) {
+            case 0:
+                string[i] = 'A' + rand() % 26;
+                break;
+            case 1:
+                string[i] = 'a' + rand() % 26;
+                break;
+            case 2:
+                string[i] = '0' + rand() % 10;
+                break;
+            default:
+                string[i] = 'x';
+                break;
+        }
+    }
+    string[length - 1] = '\0';
+    return string;
+}
+
+int main(int argc, char const *argv[]) {
+    char fileName[50] = "test";
+    char *key1 = NULL;
+    char *value1 = NULL;
+    int i = 0;
+
+// 写
+//    clock_t start, stop;
+//    start = clock();
+//    for(i = 1; i < 10000; i++) {
+//        key1 = genRandomString(8);
+//        value1 = genRandomString(10);
+//        WriteKeyValue(fileName,key1,value1);
+//    }
+//    WriteKeyValue(fileName,"wt","hello");
+//    stop = clock();
+//    //计算以秒为单位的运行时间，（结束时间-开始时间）/CLK_TCK
+//    printf("耗费时间为%f秒\n", ((double)(stop - start)) / CLK_TCK);
+
+
+// 读
+    loadIndex("indexes");
+    LARGE_INTEGER freq;
+    LARGE_INTEGER start, stop;
+    double exe_time;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&start);
+
+    char *string = ReadValue("test", "wt");
+    
+    QueryPerformanceCounter(&stop);
+    exe_time = 1e3*(stop.QuadPart - start.QuadPart) / freq.QuadPart;
+    printf(string);
+    printf("耗费时间为%lf秒\n", exe_time);
+
+    unsigned int len = HASH_COUNT(wtdb);
+    printf("索引长度: %d", len);
+
+    return 0;
 }
