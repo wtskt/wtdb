@@ -21,26 +21,39 @@ struct index {
     int offset;
     UT_hash_handle hh;         /* makes this structure hashable */
 };
-/*声明哈希为NULL指针*/
-struct index *wtdb = NULL;     /* important! initialize to NULL */
+
+struct index *kvDB = NULL;     /* important! initialize to NULL */
+struct index *flushKvDB = NULL;       /* 存放新增的索引，在关闭数据库时，将会自动flush到磁盘 */
 
 
 /**
- * 描述: 往哈希表中添加元素
- * @param key 需要添加的键
- * @param offset 键对应的值
+ * 功能描述: 向指定索引表中添加索引
+ * @param s
+ * @param key
+ * @param offset
  */
-void addIndex(char *key, int offset) {
+void add(struct index **target, char *key, int offset) { // 注意指针传参！！！
     struct index *s;
     /*重复性检查，当把两个相同key值的结构体添加到哈希表中时会报错*/
-    HASH_FIND_STR(wtdb, key, s);  /* id already in the hash? */
+    HASH_FIND_STR(*target, key, s);  /* id already in the hash? */
     /*只有在哈希中不存在ID的情况下，我们才创建该项目并将其添加。否则，我们只修改已经存在的结构。*/
     if (s==NULL) {
         s = (struct index *)malloc(sizeof *s);
         strcpy(s->key, key);
-        HASH_ADD_STR(wtdb , key, s);  /* key: name of key field */
+        HASH_ADD_STR(*target, key, s);  /* key: name of key field */
     }
     s->offset = offset;
+}
+
+
+/**
+ * 描述: 记录新增的索引
+ * @param key
+ * @param offset
+ */
+void addNewIndex(char *key, int offset) {
+    add(&flushKvDB, key, offset);
+    add(&kvDB, key, offset);
 }
 
 
@@ -51,7 +64,7 @@ void addIndex(char *key, int offset) {
  */
 struct index *findIndex(char *key) {
     struct index *s;
-    HASH_FIND_STR(wtdb, key, s );  /* s: output pointer */
+    HASH_FIND_STR(kvDB, key, s );  /* s: output pointer */
     return s;
 }
 
@@ -61,22 +74,33 @@ struct index *findIndex(char *key) {
  * @param child 待删除的键值对结构
  */
 void deleteIndex(struct index *child) {
-    HASH_DEL(wtdb, child);          /* user: pointer to deletee */
-    free(wtdb);             /* optional; it's up to you! */
+    HASH_DEL(kvDB, child);          /* user: pointer to deletee */
+    free(kvDB);             /* optional; it's up to you! */
 }
 
-
 /**
- * 功能描述: 将索引存入磁盘
+ * 功能描述: 将一对索引存入磁盘
  * @param key
  * @param offset
  */
 void storageIndex(char *key, int offset) {
-    FILE *fp = fopen("indexes", "a+");
+    FILE *fp = fopen("indexes", "a");
     fprintf(fp, "%s=%d\n", key, offset);
     fclose(fp);
 }
 
+/**
+ * 功能描述: 将哈希表中索引存入磁盘
+ */
+void flushIndex() {
+    FILE *fp = fopen("indexes", "a");
+    struct index *s;
+    // 遍历索引, 并写入文件中
+    for (s = flushKvDB; s != NULL; s = s->hh.next) {
+        fprintf(fp, "%s=%d\n", s->key, s->offset);
+    }
+    fclose(fp);
+}
 
 /**
  * 功能描述: 将字符串转为int整数
@@ -92,7 +116,6 @@ int parseInt(char *str) {
     return res;
 }
 
-
 /**
  * 功能描述: 从指定文件中加载索引
  * @param fileName
@@ -100,14 +123,14 @@ int parseInt(char *str) {
  */
 _Bool loadIndex(char *fileName) {
     FILE *fp = fopen(fileName, "r");
-    char buf[ABUP_JSON_KEY_SIZE];
+    char buf[128];
 
     if (fp == NULL) {
         printf("------文件不存在------");
         return false;
     }
 
-    while (fgets(buf, ABUP_JSON_KEY_SIZE, fp)) {
+    while (fgets(buf, 128, fp)) {
         size_t len = strlen(buf);
         char *key;
 
@@ -119,7 +142,7 @@ _Bool loadIndex(char *fileName) {
             }
         }
         key = buf;
-        addIndex(key, offset);
+        add(&kvDB, key, offset);
     }
     return true;
 }
